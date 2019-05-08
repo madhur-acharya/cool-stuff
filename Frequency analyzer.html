@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>web audio api test</title>
+</head>
+<style>
+    td{padding: 5px;}
+    tr{padding: 5px; background-color: darkcyan;}
+    canvas{display: block; border: 3px solid grey;}
+    .slide{width: 75vw;}
+
+  
+</style>
+<body>
+    <p id= "unrdy_stats" >...</p>
+    <input id="upload_file" type= "file" accept= "audio/*" onchange= "upload(this.files)">
+    <audio id="player" loop controls crossorigin="anonymous" autoplay> </audio>
+    <button id= "pause_play">pause/play</button>
+    <table id= "filter_table" >
+    <tbody>
+    <tr>
+        <td><label> Frequency Selector</label></td>
+        <td><input class= "slide" id="freq_select" type="range" min= "0" step= "1" value= "1"></td><td><output id="freq_select_op">0</output></td>
+    </tr>    
+    <tr>
+        <td><label> GAIN</label></td>
+        <td><input class= "slide" id="gain" type="range" min= "0" max= "1" step= "0.01" value= "1"></td><td><output id="gain_op">1</output></td>
+    </tr>
+    <tr>
+        <td><label>STEREO PAN</label></td>
+        <td><input class= "slide" id="stereo_panner" type="range" min= "-1" max= "1" step= "0.01" value= "0.0"> </td><td><output id="pan_op">0.0</output></td>
+    </tr>
+    <tr>
+        <td><label>CUTOFF FREQUENCY</label></td>
+        <td><input class= "slide" id= "cutoff" type="range" min="0" max="22050" step="1" value="22049"></td><td><output id="freq_op">22049</output></td>
+    </tr>
+    <tr>
+        <td><label>DETUNE</label></td>
+        <td><input class= "slide" id="detune" type="range" min="0" max="100" step="1" value="0"></td><td><output id="detune_op">0</output></td>
+    </tr>
+        <td><label>QUALITY FACTOR</label></td>
+        <td><input class= "slide" id="Q" type="range" min="0.0001" max="1000" step="0.01" value="1"></td><td><output id="Q_op">1</output></td>
+        <td><button id= "nudge" onclick= "change_input_type();">numeric</button> </td>
+    </tr>
+        <td><label>FILTER TYPE</label></td>
+        <td><select id="filter_type">
+                <option value="allpass" selected >allpass</option>
+                <option value="lowpass">lowpass</option>
+                <option value="highpass">highpass</option>
+                <option value="bandpass">bandpass</option>
+                <option value="lowshelf">lowshelf</option>
+                <option value="highshelf">highshelf</option>
+                <option value="peaking">peaking</option>
+                <option value="notch">notch</option>
+            </select>
+        </td>
+    </tr>   
+    </tbody>   
+    <canvas id= "playground" width= "1000" height= "600" >unsupported</canvas>
+</body>
+<script>
+
+    //window.onresize= () => document.getElementById("playground").width= window.innerWidth;
+
+    //upload audio file, read as dataURL and set as audio source---------- 
+    // make sure you reload the page everytime before you upload file  
+    function upload(my_files)
+    {
+        reader= new FileReader();
+        reader.readAsDataURL(my_files[0]);
+        reader.addEventListener("load", () => document.getElementById("player").src= reader.result);
+        start_webaudio_api();
+    }
+
+    document.getElementById("pause_play").onclick= function()
+    {
+        if(flag === false)
+        {
+            cancelAnimationFrame(ani_id);
+            document.getElementById("player").pause();
+        }
+        else
+        {
+            ani_id= requestAnimationFrame(draw);    
+            document.getElementById("player").play();
+        }
+        flag= !flag;
+    }
+
+
+    function change_input_type()
+    { 
+        if(document.getElementById("Q").type == "number")
+        {
+            document.getElementById("Q").type= "range";
+            document.getElementById("nudge").innerHTML= "range";
+        }
+        else
+        {
+            document.getElementById("Q").type= "number";
+            document.getElementById("nudge").innerHTML= "numeric";
+        }
+    }
+
+    var flag= false,
+        context, 
+        gain_node, 
+        source_node, 
+        media_element, 
+        stereo_pan_node, 
+        filter_node, 
+        analyzer, 
+        buffer_length, 
+        data_array, 
+        ani_id, 
+        slice_width,
+        slice_height, 
+        frequency_data= [],
+        freq= 0,
+        peak= 0,
+        trough= 0,
+        temp= 0,
+        peak_state= false,
+        canvas_height= document.getElementById("playground").height, 
+        canvas_width= document.getElementById("playground").width,
+        canvas_context= document.querySelector("#playground").getContext("2d"),
+        ctx= window.AudioContext || window.webkitAudioContext;
+
+        canvas_context.lineWidth= 4;
+        canvas_context.translate(0, canvas_height);
+        canvas_context.scale(1, -1);
+        canvas_context.strokeStyle= "grey";
+
+// event handlers-----------------------------------------------------
+
+    document.getElementById("gain").oninput= function(e) 
+    {
+        gain_node.gain.value= e.target.value;
+        document.getElementById("gain_op").innerHTML= e.target.value;
+        //console.log(gain_node.gain.value);
+    };  
+
+    document.getElementById("stereo_panner").oninput= function(e) 
+    {
+        stereo_pan_node.pan.value= e.target.value;
+        document.getElementById("pan_op").innerHTML= parseFloat(Number(stereo_pan_node.pan.value).toFixed(2));
+        //console.log(stereo_pan_node.pan.value);
+    };
+
+    document.getElementById("cutoff").oninput= function(e) 
+    {
+        filter_node.frequency.value= parseFloat(e.target.value);
+        document.getElementById("freq_op").innerHTML= e.target.value;
+        //console.log(filter_node.frequency.value);
+    };
+
+    document.getElementById("detune").oninput= function(e) 
+    {
+        filter_node.detune.value= parseFloat(e.target.value);
+        document.getElementById("detune_op").innerHTML= e.target.value;
+        //console.log(filter_node.detune.value);
+    };
+
+    document.getElementById("Q").oninput= function(e) 
+    {
+        filter_node.Q.value= parseFloat(e.target.value);
+        document.getElementById("Q_op").innerHTML= e.target.value;
+        //console.log(filter_node.Q.value);
+    };
+
+    document.getElementById("filter_type").onchange= function(e) 
+    {
+        filter_node.type= e.target.value;
+        //console.log(filter_node.type);
+    };
+
+    document.getElementById("freq_select").oninput= function(e)
+    {
+        freq= e.target.value;
+        document.getElementById("freq_select_op").innerHTML= freq;
+    }; 
+
+    function start_webaudio_api()
+    {
+    //create audio context------------------------------------------------
+
+        context= new ctx();
+        media_element= document.getElementById("player");
+
+    //create audio buffer source source
+        source_node= context.createMediaElementSource(media_element);
+
+    //gain, filter and pan source-------------------------------------------------
+        stereo_pan_node= context.createStereoPanner();
+        gain_node= context.createGain();
+        filter_node= context.createBiquadFilter();
+
+     //create an analyzer------------------------------------------------------
+        analyser= context.createAnalyser();
+        //analyser.smoothingTimeConstant= 0.9;
+        analyser.fftSize= 1024;
+        buffer_length= analyser.frequencyBinCount;
+        document.getElementById("freq_select").max= buffer_length;
+        data_array= new Uint8Array(buffer_length);
+
+    //defaults-------------------------------------------------------------------
+        filter_node.frequency.value= 22050;
+        filter_node.type= "allpass";
+
+    //connect nodes to source---------------------------------------------
+        source_node.connect(gain_node);
+        gain_node.connect(stereo_pan_node);
+        stereo_pan_node.connect(filter_node);
+        filter_node.connect(analyser);
+        analyser.connect(context.destination);
+
+        for(let i=0; i < data_array.length; i++)
+            frequency_data[i]= [];
+
+        ani_id= requestAnimationFrame(draw);
+    }   
+
+//canvas renderer-----------------------------------------------------------
+
+    function draw()
+    {
+        let x= 5, x2= 5;
+        slice_width= (canvas_width * 1.0 / (buffer_length))  * 1.45;
+        canvas_context.clearRect(0, 0, canvas_width, canvas_height);
+        analyser.getByteFrequencyData(data_array);
+        if(frequency_data.length <= (canvas_width / slice_width))
+            frequency_data.push(data_array[freq]);
+        else
+        {
+            frequency_data.pop();
+            frequency_data.unshift(data_array[freq]);
+        }
+        
+        peak= (peak_state && frequency_data[0] < temp) || frequency_data[0] >= 255 ? temp : peak;
+        trough= (!peak_state && frequency_data[0] > temp) || frequency_data[0] <= 0 ? temp : trough;
+
+        peak_state= frequency_data[0] >= temp ? true : false;
+        temp= frequency_data[0];
+
+        for( i= 0; i <= buffer_length ; i++)
+        {
+            canvas_context.fillStyle= frequency_data[i] > frequency_data[i + 1] ? "red" : "green";
+            canvas_context.beginPath();
+            canvas_context.moveTo(x, 0);
+            canvas_context.lineTo(x, frequency_data[i]);
+            canvas_context.stroke();
+
+            canvas_context.beginPath();
+            canvas_context.arc(x, frequency_data[i], 2.5, 0, 2 * Math.PI);
+            canvas_context.fill();
+            x= x + slice_width;
+        }
+
+        canvas_context.strokeStyle= "blue";
+        canvas_context.lineWidth= 1;
+        canvas_context.beginPath();
+        canvas_context.moveTo(0, (peak - trough) / 2 + trough);
+        canvas_context.lineTo(canvas_width, (peak - trough) / 2 + trough);
+        canvas_context.stroke();
+
+        canvas_context.strokeStyle= "green";
+        canvas_context.beginPath();
+        canvas_context.moveTo(0, peak);
+        canvas_context.lineTo(canvas_width, peak);
+        canvas_context.stroke();
+
+        canvas_context.strokeStyle= "red";
+        canvas_context.beginPath();
+        canvas_context.moveTo(0, trough);
+        canvas_context.lineTo(canvas_width, trough);
+        canvas_context.stroke();
+
+        canvas_context.strokeStyle= "lightgrey";
+        canvas_context.lineWidth= 4;
+
+
+        for( i= 0; i <= buffer_length; i++)
+        {
+            canvas_context.beginPath();
+            canvas_context.strokeStyle= i == freq ? "green" : "lightgrey";
+            canvas_context.moveTo(x2, canvas_height / 2);
+            canvas_context.lineTo(x2, canvas_height / 2 + data_array[i]);
+            canvas_context.stroke();
+            x2= x2 + slice_width;
+        }
+
+        document.getElementById("unrdy_stats").innerHTML= data_array[freq] > ((peak - trough) / 2) ? "BAAM!!!" : "...";
+
+        ani_id= requestAnimationFrame(draw);
+    }
+
+
+
+</script>
+</html>
